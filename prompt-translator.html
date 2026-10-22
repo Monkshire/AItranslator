@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI人话翻译器</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: { mono: ['"JetBrains Mono"', 'Consolas', 'monospace'] }
+      }
+    }
+  }
+</script>
+<style>
+  html { color-scheme: dark; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #334155; border-radius: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  .fade-in { animation: fadeIn .3s ease-in; }
+  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+  .caret::after {
+    content: '▌';
+    color: #34d399;
+    animation: blink 1s step-end infinite;
+  }
+  @keyframes blink { 50% { opacity: 0 } }
+</style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-200 antialiased">
+
+<div class="pointer-events-none fixed inset-0 overflow-hidden">
+  <div class="absolute -top-40 left-1/2 -translate-x-1/2 h-96 w-[48rem] rounded-full bg-indigo-600/20 blur-3xl"></div>
+  <div class="absolute bottom-0 right-0 h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl"></div>
+</div>
+
+<div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+  <!-- Header + 语言切换 -->
+  <header class="mb-8 flex items-start justify-between gap-4">
+    <div class="min-w-0">
+      <h1 data-i18n="appTitle" class="text-3xl sm:text-4xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 via-sky-400 to-emerald-400 bg-clip-text text-transparent">
+        AI人话翻译器
+      </h1>
+      <p data-i18n="appSubtitle" class="mt-2 text-sm text-slate-400">
+        100% 本地 WebGPU 推理 · 零 Token 消耗 · 隐私安全
+      </p>
+    </div>
+    <div class="flex shrink-0 rounded-lg border border-slate-700 bg-slate-900 overflow-hidden text-xs font-semibold">
+      <button id="langZh" class="lang-btn px-3 py-2 transition">中</button>
+      <button id="langEn" class="lang-btn px-3 py-2 transition">EN</button>
+    </div>
+  </header>
+
+  <!-- 模型状态加载条 -->
+  <div id="modelStatusBar" class="mb-8 rounded-xl border border-slate-800 bg-slate-900/70 backdrop-blur p-4">
+    <div class="flex items-center justify-between gap-4 mb-2">
+      <div class="flex items-center gap-3 min-w-0">
+        <div id="statusIcon" class="h-2.5 w-2.5 rounded-full bg-amber-400 animate-pulse shrink-0"></div>
+        <span id="statusText" class="text-sm text-slate-300 truncate">正在初始化 WebGPU 环境...</span>
+      </div>
+      <span id="statusBadge" class="hidden shrink-0 text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" data-i18n="badgeReady">
+        模型已就绪
+      </span>
+    </div>
+    <div class="h-2 rounded-full bg-slate-800 overflow-hidden">
+      <div id="progressBar" class="h-full w-0 rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500 transition-all duration-300"></div>
+    </div>
+    <p class="mt-2 text-xs text-slate-500">
+      <span data-i18n="modelLabel">模型：</span><span class="font-mono text-slate-400" id="modelNameLabel">Qwen2.5-1.5B-Instruct-q4f16_1-MLC</span><span data-i18n="modelNote">（首次使用需下载约 1 GB 权重，之后走浏览器缓存）</span>
+      <button id="clearCacheBtn" class="ml-2 underline underline-offset-2 hover:text-rose-400 transition" data-i18n="clearCache">清除已下载的模型缓存</button>
+    </p>
+  </div>
+
+  <!-- 场景快捷预设 -->
+  <div class="mb-4 flex flex-wrap items-center gap-2">
+    <span class="text-xs text-slate-500 mr-1" data-i18n="scenePrefix">场景预设：</span>
+    <button data-scene="agent"     data-i18n="sceneAgent"   class="scene-btn text-xs font-medium px-3 py-1.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-indigo-500 hover:text-indigo-400 transition">Agent 编程</button>
+    <button data-scene="copywrite" data-i18n="sceneCopy"    class="scene-btn text-xs font-medium px-3 py-1.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-indigo-500 hover:text-indigo-400 transition">文案润色</button>
+    <button data-scene="data"      data-i18n="sceneData"    class="scene-btn text-xs font-medium px-3 py-1.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-indigo-500 hover:text-indigo-400 transition">数据拆解</button>
+    <button data-scene="general"   data-i18n="sceneGeneral" class="scene-btn text-xs font-medium px-3 py-1.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-indigo-500 hover:text-indigo-400 transition">通用重构</button>
+  </div>
+
+  <!-- 双栏布局 -->
+  <main class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+    <!-- 左侧输入 -->
+    <section class="rounded-xl border border-slate-800 bg-slate-900/70 backdrop-blur flex flex-col overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+        <h2 class="text-sm font-semibold text-slate-200">
+          <span data-i18n="inputTitle">人类原始表达</span><span class="text-slate-500 font-normal" data-i18n="inputTitleSub">（模糊意象 / 口语）</span>
+        </h2>
+        <button id="clearBtn" class="text-xs text-slate-500 hover:text-rose-400 transition" data-i18n="clearInput">清空</button>
+      </div>
+      <textarea id="inputArea" rows="14"
+        class="flex-1 w-full resize-none bg-transparent px-4 py-3 text-sm leading-relaxed placeholder:text-slate-600 focus:outline-none"
+        placeholder="帮我把这个登录页面改得高级一点，现在太土了。"></textarea>
+      <div class="px-4 py-3 border-t border-slate-800 flex items-center justify-between">
+        <span id="charCount" class="text-xs text-slate-600">0 字</span>
+        <button id="translateBtn" disabled
+          class="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold bg-gradient-to-r from-indigo-600 to-sky-600 text-white
+                 disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:from-indigo-500 enabled:hover:to-sky-500 transition">
+          <svg id="btnSpinner" class="hidden h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          <span id="btnText">扩写翻译 → 结构化 Prompt</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- 右侧输出 -->
+    <section class="rounded-xl border border-slate-800 bg-slate-900/70 backdrop-blur flex flex-col overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+        <h2 class="text-sm font-semibold text-slate-200">
+          <span data-i18n="outputTitle">AI 结构化指令</span><span class="text-slate-500 font-normal" data-i18n="outputTitleSub">（精细化 Prompt）</span>
+        </h2>
+        <span id="genState" class="hidden text-xs text-emerald-400">生成中…</span>
+      </div>
+      <div id="outputArea" class="flex-1 min-h-[18rem] overflow-y-auto px-4 py-3">
+        <p id="outputPlaceholder" class="text-sm text-slate-600 leading-relaxed">
+          结构化 Prompt 将在这里流式输出。<br>格式：<span class="font-mono text-slate-500">[Role] → [Context] → [Task] → [Specific Guidelines] → [Constraints]</span>
+        </p>
+        <pre id="outputText" class="hidden whitespace-pre-wrap text-sm leading-relaxed font-slate-200"></pre>
+      </div>
+      <div class="px-4 py-3 border-t border-slate-800 flex items-center justify-between gap-3">
+        <p class="text-[11px] leading-snug text-slate-500" data-i18n="outputDisclaimer">
+          生成结果仅供参考，可能包含默认假设或不够精确的表述；请结合实际需求检查并修改后再使用。
+        </p>
+        <button id="copyBtn" disabled
+          class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-medium border border-slate-700 text-slate-300
+                 disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:border-emerald-500 enabled:hover:text-emerald-400 transition">
+          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+          </svg>
+          <span id="copyBtnText">一键复制</span>
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <footer id="footerText" class="mt-8 text-center text-xs text-slate-600">
+    推理引擎 <span class="font-mono">@mlc-ai/web-llm</span> · 需要 Chrome / Edge 113+ 且开启 WebGPU · 所有数据不离开本机<br>
+    <span data-i18n="footerContact">反馈与建议</span>：
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -1521 24772 2048" width="157.2" height="13.0" role="img" aria-label="Email" class="inline-block" fill="#64748b" shape-rendering="geometricPrecision"><path d="M876 0L876 -721Q876 -768 872.5 -798Q869 -828 861.5 -845.5Q854 -863 842.5 -870Q831 -877 814 -877Q794 -877 777 -865Q760 -853 740.5 -826Q721 -799 697.5 -754.5Q674 -710 642 -645L642 0L483 0L483 -702Q483 -757 479.5 -791Q476 -825 468.5 -844Q461 -863 449 -870Q437 -877 420 -877Q402 -877 386 -867Q370 -857 350.5 -831Q331 -805 307 -760Q283 -715 250 -645L250 0L90 0L90 -1004L223 -1004L231 -813Q257 -870 281.5 -910Q306 -950 332 -974.5Q358 -999 387.5 -1010.5Q417 -1022 453 -1022Q534 -1022 576 -969Q618 -916 618 -805Q642 -857 665 -897.5Q688 -938 714.5 -965.5Q741 -993 773 -1007.5Q805 -1022 847 -1022Q1036 -1022 1036 -731L1036 0Z"/><path transform="translate(1126,0)" d="M1034 -510Q1034 -393 1001 -295.5Q968 -198 906 -128.5Q844 -59 755 -20.5Q666 18 553 18Q445 18 359.5 -15.5Q274 -49 214.5 -114Q155 -179 123.5 -275Q92 -371 92 -496Q92 -613 125 -709.5Q158 -806 220 -875.5Q282 -945 371 -983.5Q460 -1022 573 -1022Q681 -1022 766.5 -988.5Q852 -955 911.5 -890.5Q971 -826 1002.5 -730Q1034 -634 1034 -510ZM856 -502Q856 -595 835.5 -664.5Q815 -734 777 -780.5Q739 -827 684.5 -850.5Q630 -874 563 -874Q485 -874 429.5 -843.5Q374 -813 338.5 -762Q303 -711 286.5 -643.5Q270 -576 270 -502Q270 -409 290.5 -339Q311 -269 349 -222.5Q387 -176 441 -152.5Q495 -129 563 -129Q641 -129 696.5 -159.5Q752 -190 787.5 -241Q823 -292 839.5 -359.5Q856 -427 856 -502Z"/><path transform="translate(2252,0)" d="M160 -1004L315 -1004L322 -842Q366 -894 407 -928.5Q448 -963 487.5 -984Q527 -1005 568 -1013.5Q609 -1022 653 -1022Q808 -1022 887.5 -930.5Q967 -839 967 -655L967 0L793 0L793 -641Q793 -759 749 -815.5Q705 -872 618 -872Q586 -872 555.5 -862.5Q525 -853 492 -829.5Q459 -806 420.5 -766Q382 -726 334 -666L334 0L160 0Z"/><path transform="translate(3378,0)" d="M1063 0L824 0L356 -538L356 0L182 0L182 -1413L356 -1413L356 -545L807 -1004L1037 -1004L566 -541Z"/><path transform="translate(4504,0)" d="M955 -274Q955 -221 937 -179Q919 -137 888 -104.5Q857 -72 816 -49Q775 -26 728.5 -11Q682 4 633 11Q584 18 537 18Q435 18 349.5 9Q264 0 182 -20L182 -180Q270 -155 357 -142Q444 -129 530 -129Q655 -129 715 -163Q775 -197 775 -260Q775 -287 765.5 -308.5Q756 -330 731 -349.5Q706 -369 653.5 -390Q601 -411 510 -438Q442 -458 384.5 -483.5Q327 -509 285 -544Q243 -579 219 -626Q195 -673 195 -737Q195 -779 214.5 -829Q234 -879 281 -922Q328 -965 408 -993.5Q488 -1022 608 -1022Q667 -1022 739 -1015.5Q811 -1009 889 -993L889 -838Q807 -858 733.5 -867.5Q660 -877 606 -877Q541 -877 496.5 -867Q452 -857 424.5 -839.5Q397 -822 385 -798.5Q373 -775 373 -748Q373 -721 383.5 -699Q394 -677 422.5 -656.5Q451 -636 502 -615.5Q553 -595 635 -571Q724 -545 785 -516.5Q846 -488 884 -453Q922 -418 938.5 -374Q955 -330 955 -274Z"/><path transform="translate(5630,0)" d="M967 0L793 0L793 -641Q793 -757 749.5 -814.5Q706 -872 625 -872Q590 -872 559.5 -862.5Q529 -853 496 -829.5Q463 -806 424 -766Q385 -726 334 -666L334 0L160 0L160 -1413L334 -1413L334 -1004L328 -846Q369 -895 408.5 -928.5Q448 -962 487.5 -983Q527 -1004 568 -1013Q609 -1022 653 -1022Q803 -1022 885 -930.5Q967 -839 967 -655Z"/><path transform="translate(6756,0)" d="M502 -860L205 -860L205 -1004L678 -1004L678 -145L977 -145L977 0L172 0L172 -145L502 -145ZM563 -1425Q592 -1425 617 -1414.5Q642 -1404 660.5 -1385Q679 -1366 689.5 -1341.5Q700 -1317 700 -1288Q700 -1260 689.5 -1235Q679 -1210 660.5 -1191Q642 -1172 617 -1161.5Q592 -1151 563 -1151Q534 -1151 509 -1161.5Q484 -1172 465.5 -1191Q447 -1210 436.5 -1235Q426 -1260 426 -1288Q426 -1317 436.5 -1341.5Q447 -1366 465.5 -1385Q484 -1404 509 -1414.5Q534 -1425 563 -1425Z"/><path transform="translate(7882,0)" d="M201 -1004L360 -1004L365 -819Q454 -926 540.5 -974Q627 -1022 715 -1022Q871 -1022 951.5 -921Q1032 -820 1026 -621L850 -621Q853 -753 811.5 -812.5Q770 -872 690 -872Q655 -872 619.5 -859.5Q584 -847 546.5 -819.5Q509 -792 467 -749Q425 -706 377 -645L377 0L201 0Z"/><path transform="translate(9008,0)" d="M1008 -555Q1008 -518 1007 -493Q1006 -468 1004 -446L299 -446Q299 -292 385 -209.5Q471 -127 633 -127Q677 -127 721 -130.5Q765 -134 806 -140Q847 -146 884.5 -153.5Q922 -161 954 -170L954 -27Q883 -7 793.5 5.5Q704 18 608 18Q479 18 386 -17Q293 -52 233.5 -118.5Q174 -185 145.5 -281.5Q117 -378 117 -500Q117 -606 147.5 -700.5Q178 -795 236.5 -866.5Q295 -938 380 -980Q465 -1022 573 -1022Q678 -1022 759 -989Q840 -956 895.5 -895.5Q951 -835 979.5 -748.5Q1008 -662 1008 -555ZM827 -580Q830 -647 814 -702.5Q798 -758 764.5 -798Q731 -838 681 -860.5Q631 -883 565 -883Q508 -883 461 -861Q414 -839 380 -799Q346 -759 325 -703Q304 -647 299 -580Z"/><path transform="translate(10134,0)" d="M1001 -1145L453 0L254 0L823 -1145L117 -1145L117 -1307L1001 -1307Z"/><path transform="translate(11260,0)" d="M997 0L176 0L176 -162L512 -162L512 -1116L199 -946L135 -1094L551 -1313L705 -1313L705 -162L997 -162Z"/><path transform="translate(12386,0)" d="M997 0L176 0L176 -162L512 -162L512 -1116L199 -946L135 -1094L551 -1313L705 -1313L705 -162L997 -162Z"/><path transform="translate(13512,0)" d="M780 -408Q771 -344 770 -302Q769 -260 775.5 -236Q782 -212 796 -202.5Q810 -193 831 -193Q859 -193 884 -222.5Q909 -252 928.5 -313.5Q948 -375 959.5 -469Q971 -563 971 -692Q971 -836 953 -949Q935 -1062 896 -1141Q857 -1220 794.5 -1261.5Q732 -1303 643 -1303Q575 -1303 511.5 -1268.5Q448 -1234 393.5 -1171.5Q339 -1109 294.5 -1021.5Q250 -934 218.5 -828Q187 -722 169.5 -600Q152 -478 152 -346Q152 -24 249 134.5Q346 293 522 293Q611 293 688 272.5Q765 252 848 211L848 340Q766 378 684 397Q602 416 512 416Q257 416 134.5 225Q12 34 10 -344Q9 -495 30 -633.5Q51 -772 90.5 -892Q130 -1012 186.5 -1110.5Q243 -1209 314.5 -1278.5Q386 -1348 470 -1386.5Q554 -1425 649 -1425Q768 -1425 855.5 -1376.5Q943 -1328 1000 -1236.5Q1057 -1145 1084.5 -1012Q1112 -879 1112 -709Q1111 -537 1089.5 -414.5Q1068 -292 1029 -214Q990 -136 934.5 -99.5Q879 -63 811 -63Q733 -63 695 -103Q657 -143 657 -211Q619 -134 575 -98.5Q531 -63 469 -63Q375 -63 328 -133.5Q281 -204 281 -356Q281 -411 287.5 -474Q294 -537 309.5 -600.5Q325 -664 350 -722.5Q375 -781 411.5 -825.5Q448 -870 498 -897Q548 -924 612 -924Q650 -924 683 -915Q716 -906 731 -897L860 -928ZM678 -764Q669 -776 650.5 -785.5Q632 -795 604 -795Q574 -795 550 -774Q526 -753 507.5 -718Q489 -683 476.5 -638.5Q464 -594 455.5 -547Q447 -500 443.5 -454.5Q440 -409 440 -373Q440 -277 452 -235Q464 -193 498 -193Q510 -193 522 -198Q534 -203 547.5 -217.5Q561 -232 577 -258Q593 -284 612 -326Z"/><path transform="translate(14638,0)" d="M883 -862Q911 -827 926.5 -780.5Q942 -734 942 -680Q942 -602 913.5 -537.5Q885 -473 833 -427Q781 -381 708.5 -355.5Q636 -330 549 -330Q486 -330 431 -343.5Q376 -357 344 -377Q325 -349 312 -324Q299 -299 299 -268Q299 -230 335.5 -205Q372 -180 432 -178L696 -168Q771 -166 834.5 -149Q898 -132 943.5 -100Q989 -68 1014.5 -21Q1040 26 1040 88Q1040 155 1011 215Q982 275 921.5 320.5Q861 366 768 393Q675 420 547 420Q425 420 339.5 400.5Q254 381 199 346.5Q144 312 119 264.5Q94 217 94 160Q94 87 128 32Q162 -23 233 -74Q207 -86 188 -104Q169 -122 157 -143.5Q145 -165 139 -189Q133 -213 133 -236Q133 -301 163.5 -355Q194 -409 236 -457Q217 -480 202.5 -502Q188 -524 177.5 -549.5Q167 -575 161.5 -604.5Q156 -634 156 -672Q156 -750 184.5 -814.5Q213 -879 264.5 -925Q316 -971 388.5 -996.5Q461 -1022 549 -1022Q586 -1022 620 -1017Q654 -1012 680 -1004L1044 -1004L1044 -862ZM279 145Q279 216 353 248.5Q427 281 559 281Q642 281 698.5 266Q755 251 789.5 226.5Q824 202 839 170.5Q854 139 854 106Q854 45 804 16Q754 -13 651 -18L389 -27Q356 -5 334.5 16Q313 37 301 58.5Q289 80 284 101.5Q279 123 279 145ZM332 -676Q332 -628 348 -588Q364 -548 393 -520Q422 -492 461.5 -476.5Q501 -461 549 -461Q601 -461 641.5 -478.5Q682 -496 709.5 -526Q737 -556 751.5 -595Q766 -634 766 -676Q766 -724 750 -764Q734 -804 705 -832Q676 -860 636.5 -875.5Q597 -891 549 -891Q497 -891 456.5 -873Q416 -855 388.5 -825.5Q361 -796 346.5 -757Q332 -718 332 -676Z"/><path transform="translate(15764,0)" d="M876 0L876 -721Q876 -768 872.5 -798Q869 -828 861.5 -845.5Q854 -863 842.5 -870Q831 -877 814 -877Q794 -877 777 -865Q760 -853 740.5 -826Q721 -799 697.5 -754.5Q674 -710 642 -645L642 0L483 0L483 -702Q483 -757 479.5 -791Q476 -825 468.5 -844Q461 -863 449 -870Q437 -877 420 -877Q402 -877 386 -867Q370 -857 350.5 -831Q331 -805 307 -760Q283 -715 250 -645L250 0L90 0L90 -1004L223 -1004L231 -813Q257 -870 281.5 -910Q306 -950 332 -974.5Q358 -999 387.5 -1010.5Q417 -1022 453 -1022Q534 -1022 576 -969Q618 -916 618 -805Q642 -857 665 -897.5Q688 -938 714.5 -965.5Q741 -993 773 -1007.5Q805 -1022 847 -1022Q1036 -1022 1036 -731L1036 0Z"/><path transform="translate(16890,0)" d="M805 0L801 -135Q719 -54 634.5 -18Q550 18 457 18Q371 18 310 -4Q249 -26 209.5 -64.5Q170 -103 151.5 -155Q133 -207 133 -268Q133 -419 245.5 -504.5Q358 -590 578 -590L786 -590L786 -678Q786 -767 729 -820.5Q672 -874 555 -874Q470 -874 387.5 -855Q305 -836 217 -801L217 -958Q250 -970 290.5 -981.5Q331 -993 376 -1002Q421 -1011 470 -1016.5Q519 -1022 569 -1022Q660 -1022 733 -1002Q806 -982 856.5 -941Q907 -900 934 -838Q961 -776 961 -692L961 0ZM786 -457L565 -457Q500 -457 453 -444Q406 -431 376 -407Q346 -383 331.5 -349.5Q317 -316 317 -274Q317 -245 326 -218.5Q335 -192 355 -171.5Q375 -151 407 -139Q439 -127 485 -127Q545 -127 622.5 -163.5Q700 -200 786 -279Z"/><path transform="translate(18016,0)" d="M502 -860L205 -860L205 -1004L678 -1004L678 -145L977 -145L977 0L172 0L172 -145L502 -145ZM563 -1425Q592 -1425 617 -1414.5Q642 -1404 660.5 -1385Q679 -1366 689.5 -1341.5Q700 -1317 700 -1288Q700 -1260 689.5 -1235Q679 -1210 660.5 -1191Q642 -1172 617 -1161.5Q592 -1151 563 -1151Q534 -1151 509 -1161.5Q484 -1172 465.5 -1191Q447 -1210 436.5 -1235Q426 -1260 426 -1288Q426 -1317 436.5 -1341.5Q447 -1366 465.5 -1385Q484 -1404 509 -1414.5Q534 -1425 563 -1425Z"/><path transform="translate(19142,0)" d="M502 -1270L205 -1270L205 -1413L678 -1413L678 -145L977 -145L977 0L172 0L172 -145L502 -145Z"/><path transform="translate(20268,0)" d="M555 -315Q589 -315 619.5 -302Q650 -289 672.5 -266Q695 -243 708 -212.5Q721 -182 721 -147Q721 -113 708 -83Q695 -53 672.5 -30.5Q650 -8 619.5 5Q589 18 555 18Q520 18 490 5Q460 -8 437.5 -30.5Q415 -53 402 -83Q389 -113 389 -147Q389 -182 402 -212.5Q415 -243 437.5 -266Q460 -289 490 -302Q520 -315 555 -315Z"/><path transform="translate(21394,0)" d="M940 -37Q872 -11 800.5 1.5Q729 14 653 14Q415 14 286.5 -115Q158 -244 158 -492Q158 -611 195 -708Q232 -805 299 -874Q366 -943 459 -980.5Q552 -1018 664 -1018Q742 -1018 810 -1007Q878 -996 940 -971L940 -805Q875 -839 807.5 -854.5Q740 -870 668 -870Q601 -870 541.5 -844.5Q482 -819 437 -771Q392 -723 366 -654Q340 -585 340 -498Q340 -316 428.5 -225.5Q517 -135 674 -135Q745 -135 811.5 -151Q878 -167 940 -199Z"/><path transform="translate(22520,0)" d="M1034 -510Q1034 -393 1001 -295.5Q968 -198 906 -128.5Q844 -59 755 -20.5Q666 18 553 18Q445 18 359.5 -15.5Q274 -49 214.5 -114Q155 -179 123.5 -275Q92 -371 92 -496Q92 -613 125 -709.5Q158 -806 220 -875.5Q282 -945 371 -983.5Q460 -1022 573 -1022Q681 -1022 766.5 -988.5Q852 -955 911.5 -890.5Q971 -826 1002.5 -730Q1034 -634 1034 -510ZM856 -502Q856 -595 835.5 -664.5Q815 -734 777 -780.5Q739 -827 684.5 -850.5Q630 -874 563 -874Q485 -874 429.5 -843.5Q374 -813 338.5 -762Q303 -711 286.5 -643.5Q270 -576 270 -502Q270 -409 290.5 -339Q311 -269 349 -222.5Q387 -176 441 -152.5Q495 -129 563 -129Q641 -129 696.5 -159.5Q752 -190 787.5 -241Q823 -292 839.5 -359.5Q856 -427 856 -502Z"/><path transform="translate(23646,0)" d="M876 0L876 -721Q876 -768 872.5 -798Q869 -828 861.5 -845.5Q854 -863 842.5 -870Q831 -877 814 -877Q794 -877 777 -865Q760 -853 740.5 -826Q721 -799 697.5 -754.5Q674 -710 642 -645L642 0L483 0L483 -702Q483 -757 479.5 -791Q476 -825 468.5 -844Q461 -863 449 -870Q437 -877 420 -877Q402 -877 386 -867Q370 -857 350.5 -831Q331 -805 307 -760Q283 -715 250 -645L250 0L90 0L90 -1004L223 -1004L231 -813Q257 -870 281.5 -910Q306 -950 332 -974.5Q358 -999 387.5 -1010.5Q417 -1022 453 -1022Q534 -1022 576 -969Q618 -916 618 -805Q642 -857 665 -897.5Q688 -938 714.5 -965.5Q741 -993 773 -1007.5Q805 -1022 847 -1022Q1036 -1022 1036 -731L1036 0Z"/></svg>
+  </footer>
+</div>
+
+<script type="module">
+/* ================= 配置 ================= */
+const MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+// 若想换模型，可改为 "Llama-3.2-1B-Instruct-q4f16_1-MLC"（中文能力弱于 Qwen）
+
+/* WebLLM 引擎库多 CDN 回退：esm.run（jsdelivr 短域名）在大陆经常不可达，依次回退 jsdelivr / unpkg */
+const WEBLLM_CDN_URLS = [
+  "https://esm.run/@mlc-ai/web-llm",
+  "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm",
+  "https://unpkg.com/@mlc-ai/web-llm/+esm"
+];
+let mlc = null;
+
+const BASE_SYSTEM_PROMPT = {
+  zh: `你是一个专业的 AI 提示词工程专家（Prompt Engineer）。
+你的任务是将用户提供的模糊、口语化、抽象的人类表达，翻译并扩展成大语言模型（如 WorkBuddy、ChatGPT、Claude）能够精确理解并完美执行的结构化 Prompt。
+请严格按照以下 Markdown 格式结构输出：
+**[Role]**：定义 AI 应该扮演的具体专家角色。
+**[Context]**：补全该任务涉及的具体背景与隐性前提。
+**[Task]**：用精准严谨的语言重述用户要完成的实际任务（只描述用户要做的事情本身，禁止出现「扩写」「翻译」「结构化 Prompt」等描述本流程的元词汇）。输入是缺陷或故障报告时，[Task] 写「定位并修复/消除……」；输入是风格或体验期望时，才写「升级/改版……」。
+**[Specific Guidelines]**：按 1、2、3 点拆解出具体的执行步骤、细节或样式要求。
+**[Constraints]**：明确逻辑边界、禁止事项或不变的约束条件。
+补充规则：
+1. 用户的输入永远是被翻译的「具体需求」本身；即使输入看起来像对某个工具或流程的描述、抱怨或故障报告，也必须将其视为用户想要完成的真实任务，禁止把输入理解为本翻译器自身功能的说明。所有板块内容只允许描述用户要做的事，任何板块中都禁止出现「扩写」「翻译为结构化 Prompt」这类元任务表述。
+2. 当输入信息不足以填充某个板块时，禁止编造具体细节；改为在该板块列出「需用户补充的关键信息」，或给出一句合理默认假设并明确标注（默认假设）。
+3. 格式要求：每个 **[板块]** 标签与其内容写在同一行；Guidelines 与 Constraints 用编号列表呈现；不要输出 Markdown 代码块围栏。
+4. 输入里的模糊感知词（如「高级一点」「太土了」「不顺眼」「没内味」）是用户真实需求的信号，必须解码为具体、可执行、可验证的要求（视觉参数、量化指标、明确的验收标准），写进 [Specific Guidelines]；禁止在任何板块照抄这些模糊词本身。
+5. [Specific Guidelines] 的每一条都必须以「针对『输入中的具体症状或期望』：」开头，且与该症状/期望有直接因果关系：输入描述的是缺陷或故障时，输出排查与修复步骤；输入表达的是风格或体验期望时，才输出设计参数。禁止把与问题无关的通用改动塞进任何板块。一次输出只能整体效仿与输入类型匹配的那一个示例，禁止把不同示例的条目拼接进同一次输出。
+示例一（视觉风格类输入）：
+输入：帮我把这个登录页面改得高级一点，现在太土了。
+输出：
+**[Role]**：资深 UI/UX 设计专家，擅长登录页与品牌门面的视觉升级。
+**[Context]**：用户有一个已上线的登录页面，观感被认为廉价过时；无设计稿与品牌规范可依，需先设定默认方向再执行（默认假设：Web 端、桌面优先）。
+**[Task]**：对该登录页面进行视觉风格升级，输出可直接落地的改版方案。
+**[Specific Guidelines]**：1. 针对「太土了/要高级感」：先定义「高级感」的视觉基调（留白比例、字阶、中性色、微投影）；2. 针对「整体观感廉价」：重构布局层级——品牌区 / 表单区 / 辅助操作区的比例与对齐方式；3. 针对「高级感要可落地」：给出具体样式参数（颜色 hex、圆角、字号、间距）；4. 针对「改了要能看懂」：输出改版要点清单并解释每个改动的理由。
+**[Constraints]**：不改变既有登录流程与表单字段；不引入新依赖或新字体文件；所有数值可直接用于 CSS。
+示例二（故障报告类输入）：
+输入：点击进消息页面会卡一下，头像会闪一下，白一下。
+输出：
+**[Role]**：前端性能与渲染优化工程师。
+**[Context]**：Web 应用在路由切换进入消息页时出现三联症状：切换卡顿、头像图片闪动、短暂白屏；技术栈未知（默认假设：SPA，图片资源无缓存策略）。
+**[Task]**：定位并消除进入消息页时的渲染卡顿、头像闪动与白屏。
+**[Specific Guidelines]**：1. 针对「头像闪一下」：排查头像图片加载策略，确认是否命中浏览器缓存与 CDN，未缓存会在导航时重复拉取导致闪动；2. 针对「白一下」：为消息页添加骨架屏或占位样式，消除白屏观感；3. 针对「卡一下」：排查路由切换期间的主线程阻塞（同步渲染长列表、大量 DOM 重建）；4. 针对「闪动后的布局跳动」：头像容器固定宽高占位，避免图片加载完成后布局跳动。
+**[Constraints]**：不改变消息页既有功能与数据结构；优先用现有依赖实现优化；每项改动注明预期收益。
+注意：保持输出结构清晰，切中要害，去除无用的客套话，直接给出可复用的 Prompt 本身。`,
+  en: `You are a professional AI prompt engineering expert.
+Your task is to translate and expand the user's vague, colloquial, abstract human expression into a structured prompt that large language models (such as ChatGPT, Claude, Codex) can precisely understand and perfectly execute.
+Output strictly in the following Markdown structure:
+**[Role]**: Define the specific expert role the AI should play.
+**[Context]**: Complete the concrete background and implicit premises involved in the task.
+**[Task]**: Restate the user's actual underlying task in precise, rigorous language — describe what the user wants done; meta words like "expand", "translate", or "structured prompt" are forbidden here. When the input is a defect or malfunction report, write [Task] as "locate and fix/eliminate ..."; only write "upgrade/redesign ..." when the input expresses a style or experience expectation.
+**[Specific Guidelines]**: Break down concrete execution steps, details, or style requirements into numbered points 1, 2, 3.
+**[Constraints]**: Clarify logical boundaries, prohibitions, or invariant constraints.
+Additional rules:
+1. The user's input is always the "concrete requirement" to be translated. Even if the input reads like a description, complaint, or bug report about some tool or workflow, treat it as the user's real underlying task — never interpret it as a description of this translator itself. Every section may only describe the user's real task; meta phrasing like "expand" or "translate into a structured prompt" is forbidden in any section.
+2. When the input lacks enough information to fill a section, do NOT fabricate specifics; instead list "key information the user should supply" in that section, or give one reasonable default clearly marked (default assumption).
+3. Formatting: every **[Section]** label and its content stay on the same line; use numbered lists for Guidelines and Constraints; never emit Markdown code fences.
+4. Fuzzy perception words in the input (e.g. "more premium", "it looks cheap", "feels off") are signals of the user's real need — decode them into concrete, executable, verifiable requirements (visual parameters, quantified metrics, explicit acceptance criteria) inside [Specific Guidelines]; never copy the fuzzy words themselves into any section.
+5. Every item in [Specific Guidelines] must start with a "For '<the specific symptom or expectation from the input>':" tag and have a direct causal link to it: if the input describes a defect or malfunction, output diagnosis and fix steps; only output design parameters when the input explicitly asks for style or experience changes. Never pad any section with generic changes unrelated to the problem. Each output must imitate exactly the one example whose type matches the input; splicing items from different examples into one output is forbidden.
+Example A (style-related input):
+Input: Make this login page look more premium — it feels cheap right now.
+Output:
+**[Role]**: Senior UI/UX design expert specializing in login pages and brand-first visual upgrades.
+**[Context]**: The user has a live login page that reads as cheap and dated; no design spec or brand guide available, so set a default direction first (default assumption: web, desktop-first).
+**[Task]**: Upgrade the visual style of the login page and deliver an immediately actionable redesign plan.
+**[Specific Guidelines]**: 1. For "cheap look / want premium": define the premium visual tone — whitespace ratio, type scale, neutral palette, subtle shadows; 2. For "overall cheap feel": restructure layout hierarchy — proportions and alignment of brand zone / form zone / secondary actions; 3. For "must be actionable": provide concrete style parameters (hex colors, radii, font sizes, spacing); 4. For "changes must be explainable": output a change list with the rationale for each change.
+**[Constraints]**: Do not alter the existing login flow or form fields; no new dependencies or font files; all values must be directly usable in CSS.
+Example B (defect-report input):
+Input: Tapping into the messages page causes a brief jank — the avatar flickers and flashes white.
+Output:
+**[Role]**: Frontend performance & rendering optimization engineer.
+**[Context]**: A web app shows three symptoms when routing into the messages page: transition jank, avatar image flicker, and a brief white flash; tech stack unknown (default assumption: SPA with no image caching strategy).
+**[Task]**: Locate and eliminate the rendering jank, avatar flicker, and white flash when entering the messages page.
+**[Specific Guidelines]**: 1. For "avatar flickers": audit avatar image loading — verify browser/CDN cache hits; an uncached re-fetch on navigation causes the flicker; 2. For "flashes white": add a skeleton screen or placeholder to the messages page; 3. For "brief jank": check main-thread blocking during the route transition (synchronous long-list rendering, heavy DOM rebuild); 4. For "layout jump after flicker": reserve fixed width/height for avatar containers to avoid layout shift once images load.
+**[Constraints]**: Do not change existing features or data structures of the messages page; prefer fixes with existing dependencies; state the expected benefit of each change.
+Note: keep the structure clear and to the point, remove useless pleasantries, and directly output the reusable prompt itself.`
+};
+
+/* 场景预设：在 System Prompt 后追加场景偏置（按语言跟随切换） */
+const SCENES = {
+  agent: {
+    hint: {
+      zh: `当前场景为「Agent 编程」（适用于 Claude Code、Codex、Cursor、WorkBuddy 等智能体编程工具）。在扩写时：[Role] 侧重全栈工程师或前端专家；[Specific Guidelines] 中应包含技术栈选型、代码结构、可维护性等工程化要求；[Constraints] 中强调不引入不必要依赖、遵循最小改动原则。`,
+      en: `Current scenario: "Agentic Coding" (for agent coding tools such as Claude Code, Codex, Cursor). When expanding: [Role] should be a senior full-stack or frontend engineer; [Specific Guidelines] must cover tech-stack choices, code structure, and maintainability; [Constraints] must forbid unnecessary dependencies and require minimal-diff changes.`
+    }
+  },
+  copywrite: {
+    hint: {
+      zh: `当前场景为「文案 / 文字表达优化」。在扩写时：[Role] 侧重资深文案或编辑；[Specific Guidelines] 中应包含目标受众、语气风格、字数范围等要求；[Constraints] 中强调不堆砌形容词、保持信息密度。`,
+      en: `Current scenario: "copywriting / text polishing". When expanding: [Role] should be a senior copywriter or editor; [Specific Guidelines] must cover target audience, tone of voice, and length limits; [Constraints] must ban stacked adjectives and require high information density.`
+    }
+  },
+  data: {
+    hint: {
+      zh: `当前场景为「数据整理 / 分析拆解」。在扩写时：[Role] 侧重数据分析师；[Specific Guidelines] 中应包含数据来源确认、字段口径、拆解维度（时间/类别/指标）、输出格式（表格/图表）等要求；[Constraints] 中强调不臆造数据、标注假设前提。`,
+      en: `Current scenario: "data wrangling / analysis breakdown". When expanding: [Role] should be a data analyst; [Specific Guidelines] must cover data source confirmation, field definitions, breakdown dimensions (time/category/metric), and output format (table/chart); [Constraints] must forbid fabricated data and require explicit assumptions.`
+    }
+  },
+  general: {
+    hint: {
+      zh: `当前场景为「通用任务重构」。不做领域偏置，根据用户原始表达自行判断最合适的专家角色与执行框架，保持结构完整、要素齐全。`,
+      en: `Current scenario: "general refactoring". Apply no domain bias; infer the most suitable expert role and execution framework from the raw input, keeping the structure complete and all sections filled.`
+    }
+  }
+};
+let activeScene = "general";
+
+/* ================= i18n ================= */
+const I18N = {
+  zh: {
+    pageTitle: "AI人话翻译器",
+    appTitle: "AI人话翻译器",
+    appSubtitle: "100% 本地 WebGPU 推理 · 零 Token 消耗 · 隐私安全",
+    badgeReady: "模型已就绪",
+    scenePrefix: "场景预设：",
+    sceneAgent: "Agent 编程", sceneCopy: "文案润色", sceneData: "数据拆解", sceneGeneral: "通用重构",
+    inputTitle: "人类原始表达", inputTitleSub: "（模糊意象 / 口语）",
+    inputPlaceholder: "帮我把这个登录页面改得高级一点，现在太土了。",
+    clearInput: "清空",
+    btnTranslate: "扩写翻译 → 结构化 Prompt",
+    btnGenerating: "扩写中...",
+    outputTitle: "AI 结构化指令", outputTitleSub: "（精细化 Prompt）",
+    outputPlaceholderHtml: `结构化 Prompt 将在这里流式输出。<br>格式：<span class="font-mono text-slate-500">[Role] → [Context] → [Task] → [Specific Guidelines] → [Constraints]</span>`,
+    genStateText: "生成中…",
+    copyBtn: "一键复制", copied: "已复制 ✓",
+    outputDisclaimer: "生成结果仅供参考，可能包含默认假设或不够精确的表述；请结合实际需求检查并修改后再使用。",
+    footerContact: "反馈与建议",
+    modelLabel: "模型：",
+    modelNote: "（首次使用需下载约 1 GB 权重，之后走浏览器缓存）",
+    clearCache: "清除已下载的模型缓存",
+    footerHtml: `推理引擎 <span class="font-mono">@mlc-ai/web-llm</span> · 需要 Chrome / Edge 113+ 且开启 WebGPU · 所有数据不离开本机`
+  },
+  en: {
+    pageTitle: "AI Plain-Talk Prompt Translator",
+    appTitle: "AI Plain-Talk Prompt Translator",
+    appSubtitle: "100% local WebGPU inference · Zero token cost · Fully private",
+    badgeReady: "Model Ready",
+    scenePrefix: "Presets: ",
+    sceneAgent: "Agent Coding", sceneCopy: "Copywriting", sceneData: "Data Analysis", sceneGeneral: "General",
+    inputTitle: "Raw Human Input", inputTitleSub: " (vague / colloquial)",
+    inputPlaceholder: "Make this login page look more premium — it feels cheap right now.",
+    clearInput: "Clear",
+    btnTranslate: "Expand → Structured Prompt",
+    btnGenerating: "Generating...",
+    outputTitle: "AI Structured Instruction", outputTitleSub: " (refined prompt)",
+    outputPlaceholderHtml: `The structured prompt will stream here.<br>Format: <span class="font-mono text-slate-500">[Role] → [Context] → [Task] → [Specific Guidelines] → [Constraints]</span>`,
+    genStateText: "Generating…",
+    copyBtn: "Copy All", copied: "Copied ✓",
+    outputDisclaimer: "AI-generated output is for reference only — it may contain default assumptions or imprecise wording. Review and adapt it to your actual needs before use.",
+    footerContact: "Feedback & suggestions",
+    modelLabel: "Model: ",
+    modelNote: " (~1 GB first download, then served from browser cache)",
+    clearCache: "Clear downloaded model cache",
+    footerHtml: `Engine <span class="font-mono">@mlc-ai/web-llm</span> · Requires Chrome / Edge 113+ with WebGPU · Your data never leaves this device`
+  }
+};
+
+let lang = localStorage.getItem("pt_lang") === "en" ? "en" : "zh";
+const L = (zh, en) => (lang === "en" ? en : zh);
+const t = (key) => I18N[lang][key] ?? I18N.zh[key] ?? key;
+
+function applyI18n() {
+  document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+  document.title = t("pageTitle");
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.getElementById("footerText").innerHTML = t("footerHtml");
+  outputPlaceholder.innerHTML = t("outputPlaceholderHtml");
+  inputArea.placeholder = t("inputPlaceholder");
+  if (!generating) btnText.textContent = t("btnTranslate");
+  if (copyBtnText.textContent !== t("copied")) copyBtnText.textContent = t("copyBtn");
+  genState.textContent = t("genStateText");
+  document.getElementById("langZh").className = "lang-btn px-3 py-2 transition " + (lang === "zh" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200");
+  document.getElementById("langEn").className = "lang-btn px-3 py-2 transition " + (lang === "en" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200");
+  refreshCharCount();
+}
+
+document.getElementById("langZh").addEventListener("click", () => setLang("zh"));
+document.getElementById("langEn").addEventListener("click", () => setLang("en"));
+function setLang(l) {
+  if (lang === l) return;
+  lang = l;
+  localStorage.setItem("pt_lang", l);
+  applyI18n();
+}
+
+/* ================= DOM ================= */
+const $ = (id) => document.getElementById(id);
+const statusText = $("statusText"), statusBadge = $("statusBadge"), statusIcon = $("statusIcon");
+const progressBar = $("progressBar");
+const inputArea = $("inputArea"), charCount = $("charCount");
+const translateBtn = $("translateBtn"), btnSpinner = $("btnSpinner"), btnText = $("btnText");
+const outputPlaceholder = $("outputPlaceholder"), outputText = $("outputText"), genState = $("genState");
+const copyBtn = $("copyBtn"), copyBtnText = $("copyBtnText");
+const clearBtn = $("clearBtn");
+
+/* ================= 模型加载 ================= */
+let engine = null;
+let generating = false;
+
+/* 心跳看门狗：下载长时间无新数据时，状态条实时显示已等待秒数，避免「看起来卡死」 */
+let loadState = "loading"; // loading | ready | error
+let lastProgressAt = Date.now(), lastProgressText = "";
+
+function setStatus(text, pct, ready = false, error = false) {
+  loadState = error ? "error" : ready ? "ready" : "loading";
+  lastProgressAt = Date.now();
+  lastProgressText = text;
+  statusText.textContent = text;
+  progressBar.style.width = `${Math.round(pct * 100)}%`;
+  statusIcon.className = `h-2.5 w-2.5 rounded-full shrink-0 ${
+    error ? "bg-rose-500" : ready ? "bg-emerald-400" : "bg-amber-400 animate-pulse"
+  }`;
+  statusBadge.classList.toggle("hidden", !ready);
+  translateBtn.disabled = !ready || generating || !inputArea.value.trim();
+}
+
+setInterval(() => {
+  if (loadState !== "loading") return;
+  const idle = Math.round((Date.now() - lastProgressAt) / 1000);
+  if (idle >= 8) {
+    statusText.textContent = idle >= 30
+      ? `${lastProgressText} · ${L("已等待", "no update for")} ${idle}s${L("，镜像线路较慢但仍在传输，请勿关闭页面", " — mirror route is slow but still transferring; keep this tab open")}`
+      : `${lastProgressText} · ${L("已等待", "no update for")} ${idle}s`;
+  }
+}, 1000);
+
+/* 国内镜像：HuggingFace 权重走 hf-mirror.com，GPU 算子库（.wasm，托管在 raw.githubusercontent.com）走 gh 代理。
+   gh 代理属于社区服务，对大文件长连接不稳定、可能中途断流，因此准备多个代理按可达性轮换重试。 */
+const HF_MIRROR = "https://hf-mirror.com";
+const GH_PROXIES = ["https://ghproxy.net/", "https://ghfast.top/", "https://gh-proxy.com/"];
+
+function buildAppConfig(route) {
+  const cfg = JSON.parse(JSON.stringify(mlc.prebuiltAppConfig));
+  if (!route.mirror) return cfg;
+  for (const rec of cfg.model_list) {
+    if (rec.model?.startsWith("https://huggingface.co")) {
+      rec.model = rec.model.replace("https://huggingface.co", HF_MIRROR);
+    }
+    if (rec.model_lib?.startsWith("https://raw.githubusercontent.com")) {
+      rec.model_lib = route.proxy + rec.model_lib;
+    }
+  }
+  return cfg;
+}
+
+function onInitProgress(report) {
+  // report.progress: 0~1；report.text 包含 shard 下载 / shader 编译等阶段文本
+  const s = report.text || "";
+  let display = s;
+  const m = s.match(/Fetching param cache\[.*?\]\s*:\s*([\d.]+)%/);
+  if (m) display = L(`正在下载模型权重分片 ${m[1]}%`, `Downloading weight shard ${m[1]}%`);
+  else if (s.includes("Loading") || s.includes("loading")) display = L("正在加载本地 1.5B 语言模型...", "Loading local 1.5B language model...");
+  else if (s.toLowerCase().includes("shader") || s.toLowerCase().includes("gpu")) display = L("正在编译 GPU 算子内核...", "Compiling GPU kernels...");
+  setStatus(display || L("模型初始化中...", "Initializing model..."), report.progress ?? 0);
+}
+
+async function createEngine(route) {
+  return mlc.CreateMLCEngine(MODEL_ID, {
+    appConfig: buildAppConfig(route),
+    initProgressCallback: onInitProgress
+  });
+}
+
+/* ================= 线路探测 ================= */
+/* 被墙时 fetch 不是立刻报错，而是 TCP 挂起等底层超时（几十秒起），所以回退很慢。
+   这里用 4 秒 AbortController 超时并行探测直连/镜像可达性，提前选路。 */
+const PROBE_TIMEOUT_MS = 4000;
+
+async function probeHost(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    // no-cors：只验证网络可达（连接建立即可），不关心响应内容与 CORS
+    await fetch(url, { mode: "no-cors", cache: "no-store", signal: ctrl.signal });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function detectRoute() {
+  setStatus(L("正在检测下载线路（直连 / 国内镜像，最多 4 秒）...", "Detecting download route (direct / CN mirror, up to 4s)..."), 0);
+  const probeResults = await Promise.all([
+    probeHost("https://huggingface.co/robots.txt"),
+    probeHost("https://raw.githubusercontent.com/robots.txt"),
+    probeHost("https://hf-mirror.com/robots.txt"),
+    ...GH_PROXIES.map(p => probeHost(p))
+  ]);
+  const [hf, gh, hfMirror] = probeResults;
+  const okProxies = GH_PROXIES.filter((_, i) => probeResults[3 + i]);
+  console.log("[route-probe]", { huggingface: hf, raw_github: gh, hf_mirror: hfMirror, gh_proxies: okProxies });
+  return { directOk: hf && gh, hfMirror, okProxies };
+}
+
+/* 网络类错误统一判定：含下载中途断流（Cache add: Request failed）等情况 */
+const isNetworkError = (e) => /Failed to fetch|NetworkError|fetch failed|Request failed|on 'Cache'|Load failed|ERR_/i.test(String(e?.message || e));
+
+async function initEngine() {
+  window.__ptBooted = true; // 供经典脚本看门狗检测模块是否成功启动
+  if (!navigator.gpu) {
+    setStatus(L("当前浏览器不支持 WebGPU，请使用 Chrome / Edge 113+ 打开本页面。", "WebGPU is not supported in this browser. Please use Chrome / Edge 113+."), 0, false, true);
+    return;
+  }
+  // 引擎库加载：静态 import 失败会杀死整个模块，这里改为动态 import + 多 CDN 回退
+  for (const url of WEBLLM_CDN_URLS) {
+    try {
+      setStatus(L(`正在加载 WebLLM 引擎库（${new URL(url).host}）...`, `Loading WebLLM runtime (${new URL(url).host})...`), 0);
+      mlc = await import(url);
+      break;
+    } catch (e) {
+      console.warn("[webllm-cdn] unreachable:", url, e);
+    }
+  }
+  if (!mlc) {
+    setStatus(L(
+      "WebLLM 引擎库加载失败：esm.run / jsdelivr / unpkg 均不可达。请开启代理后刷新，或检查网络后重试。",
+      "Failed to load WebLLM runtime: esm.run / jsdelivr / unpkg all unreachable. Enable a proxy and refresh."), 0, false, true);
+    return;
+  }
+  if (location.protocol === "file:") {
+    setStatus(L("提示：当前通过 file:// 直接打开，模型缓存可能不可用，建议经本地 http 服务访问。开始加载...",
+               "Note: opened via file:// — model caching may not work; serving over http://localhost is recommended. Loading..."), 0);
+  }
+  try {
+    const info = await detectRoute();
+    // 构造多线路重试链：直连优先（海外），其后按探测可达性排多个镜像代理，最后兜底
+    const attempts = [];
+    if (info.directOk) attempts.push({ mirror: false });
+    if (info.hfMirror && info.okProxies.length) {
+      for (const p of info.okProxies) attempts.push({ mirror: true, proxy: p });
+    }
+    if (!info.directOk) attempts.push({ mirror: false }); // 探测可能误判，直连始终兜底
+    if (!attempts.length) attempts.push({ mirror: true, proxy: GH_PROXIES[0] }, { mirror: false });
+
+    let lastErr = null;
+    for (let i = 0; i < attempts.length; i++) {
+      const a = attempts[i];
+      const label = a.mirror
+        ? `镜像（hf-mirror + ${new URL(a.proxy).host}）`
+        : "直连";
+      setStatus(L(`线路 ${i + 1}/${attempts.length}：${label}，开始下载...`,
+                 `Route ${i + 1}/${attempts.length}: ${a.mirror ? `mirror (hf-mirror + ${new URL(a.proxy).host})` : "direct"}, downloading...`), 0);
+      try {
+        engine = await createEngine(a);
+        break;
+      } catch (e) {
+        if (!isNetworkError(e)) throw e; // 非网络错误（如显存不足）重试无意义
+        lastErr = e;
+        console.warn(`[route] ${label} failed:`, e);
+      }
+    }
+    if (!engine) throw lastErr;
+    setStatus(L("模型加载完成，随时可以开始扩写。", "Model loaded — ready to go."), 1, true);
+  } catch (e) {
+    console.error(e);
+    setStatus(L(
+      `模型加载失败：${e.message || e}。多为下载线路中断或不稳定所致：请直接刷新重试（已下载的权重分片走缓存续传，不会重头下载）；若反复失败，请开启代理后刷新。`,
+      `Model load failed: ${e.message || e}. Usually a broken or unstable download route: just refresh to retry (downloaded shards are cached and resume); if it keeps failing, enable a proxy and refresh.`), 0, false, true);
+  }
+}
+
+/* ================= 交互 ================= */
+function refreshCharCount() {
+  charCount.textContent = L(`${inputArea.value.length} 字`, `${inputArea.value.length} chars`);
+  translateBtn.disabled = !engine || generating || !inputArea.value.trim();
+}
+inputArea.addEventListener("input", refreshCharCount);
+
+clearBtn.addEventListener("click", () => {
+  inputArea.value = "";
+  refreshCharCount();
+  inputArea.focus();
+});
+
+/* 场景切换：高亮当前生效预设 */
+document.querySelectorAll(".scene-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".scene-btn").forEach(b =>
+      b.classList.remove("border-indigo-500", "text-indigo-400", "bg-indigo-500/10"));
+    btn.classList.add("border-indigo-500", "text-indigo-400", "bg-indigo-500/10");
+    activeScene = btn.dataset.scene;
+  });
+});
+document.querySelector('[data-scene="general"]').classList.add("border-indigo-500", "text-indigo-400", "bg-indigo-500/10");
+
+/* 核心：调用 WebLLM 流式推理 */
+translateBtn.addEventListener("click", async () => {
+  const raw = inputArea.value.trim();
+  if (!raw || !engine || generating) return;
+
+  generating = true;
+  translateBtn.disabled = true;
+  btnSpinner.classList.remove("hidden");
+  btnText.textContent = t("btnGenerating");
+  genState.classList.remove("hidden");
+
+  outputPlaceholder.classList.add("hidden");
+  outputText.classList.remove("hidden");
+  outputText.textContent = "";
+  outputText.classList.add("caret");
+  copyBtn.disabled = true;
+
+  const systemPrompt = `${BASE_SYSTEM_PROMPT[lang]}\n\n${SCENES[activeScene].hint[lang]}`;
+  const userMsg = L(
+    `用户原始表达：\n\n"""${raw}"""\n\n请直接输出它对应的结构化 Prompt。`,
+    `Raw human expression:\n\n"""${raw}"""\n\nOutput the corresponding structured prompt directly.`
+  );
+  let full = "";
+
+  try {
+    const chunks = await engine.chat.completions.create({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMsg }
+      ],
+      temperature: 0.4,
+      max_tokens: 1024,
+      stream: true,
+      stream_options: { include_usage: true }
+    });
+
+    for await (const chunk of chunks) {
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (delta) {
+        full += delta;
+        outputText.textContent = full;          // 流式增量本身就是打字机效果
+        outputArea.scrollTop = outputArea.scrollHeight;
+      }
+    }
+  } catch (e) {
+    console.error(e);
+    full += `\n\n[${L("生成出错", "Generation error")}: ${e.message || e}]`;
+    outputText.textContent = full;
+  } finally {
+    outputText.classList.remove("caret");
+    generating = false;
+    btnSpinner.classList.add("hidden");
+    btnText.textContent = t("btnTranslate");
+    genState.classList.add("hidden");
+    translateBtn.disabled = !inputArea.value.trim();
+    copyBtn.disabled = !full;
+  }
+});
+
+/* 一键复制 */
+copyBtn.addEventListener("click", async () => {
+  const text = outputText.textContent;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    copyBtnText.textContent = t("copied");
+  } catch {
+    // clipboard API 不可用时的兜底
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+    copyBtnText.textContent = t("copied");
+  }
+  setTimeout(() => (copyBtnText.textContent = t("copyBtn")), 1800);
+});
+
+/* 清除模型缓存：WebLLM 权重与算子库存于当前源的 Cache Storage（webllm/* 命名空间） */
+$("clearCacheBtn").addEventListener("click", async () => {
+  if (!confirm(L(
+    "将删除当前源下已缓存的模型权重与算子库（约 1 GB），删除后再次使用需重新下载。确认清除？",
+    "This deletes cached model weights & kernels (~1 GB) for the current origin; they will be re-downloaded next time. Proceed?"))) return;
+  try {
+    if (typeof caches === "undefined") {
+      alert(L(
+        "当前环境（如 file://）不支持缓存 API。请通过 F12 → Application → Cache Storage 手动删除 webllm 开头的条目。",
+        "Cache API is unavailable in this environment (e.g. file://). Delete webllm* entries via DevTools → Application → Cache Storage."));
+      return;
+    }
+    const keys = await caches.keys();
+    const targets = keys.filter(k => /webllm/i.test(k));
+    for (const k of targets) await caches.delete(k);
+    if (targets.length === 0) {
+      alert(L(
+        "当前源没有找到 webllm 缓存（可能缓存于其他源，例如 file:// 与 127.0.0.1 的缓存相互独立）。可 F12 → Application → Cache Storage 逐源检查。",
+        "No webllm cache found for this origin (caches are per-origin, e.g. file:// vs 127.0.0.1). Check each origin in DevTools → Application → Cache Storage."));
+    } else {
+      alert(L(
+        `已清除 ${targets.length} 个缓存条目：${targets.join("、")}\n页面即将刷新。`,
+        `Deleted ${targets.length} cache entries: ${targets.join(", ")}\nReloading...`));
+      location.reload();
+    }
+  } catch (e) {
+    alert(L(
+      "清除失败：" + (e.message || e) + "\n可通过 F12 → Application → Cache Storage 手动删除。",
+      "Failed to clear: " + (e.message || e) + "\nDelete manually via DevTools → Application → Cache Storage."));
+  }
+});
+
+/* ================= 启动 ================= */
+applyI18n();
+initEngine();
+</script>
+
+<script>
+  /* 启动看门狗（经典脚本，不依赖 ES module 与任何 CDN）：
+     模块正常启动会立刻置位 window.__ptBooted；8 秒仍未置位 = 模块整体死亡（旧浏览器或语法错误） */
+  setTimeout(function () {
+    if (window.__ptBooted) return;
+    var el = document.getElementById("statusText");
+    var icon = document.getElementById("statusIcon");
+    if (el) el.textContent = "页面脚本启动失败：浏览器过旧（需 Chrome / Edge 113+ 的 ES module 支持）或脚本被网络拦截。请更换浏览器或检查网络后刷新。";
+    if (icon) icon.className = "h-2.5 w-2.5 rounded-full shrink-0 bg-rose-500";
+  }, 8000);
+</script>
+</body>
+</html>
